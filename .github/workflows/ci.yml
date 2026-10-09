@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: shellcheck hooks/*.sh install.sh uninstall.sh tests/*.sh
+      - name: python syntax
+        run: python3 -m py_compile lib/edit_settings.py tests/live-test.py
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: hook tests
+        run: tests/test-hook.sh
+      - name: install tests
+        run: tests/test-install.sh
