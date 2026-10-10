@@ -104,10 +104,11 @@ fi
 input=$(cat)
 
 # field <jq path> <key>: read a string field from the hook input. Uses jq when it is
-# installed; otherwise a sed match on the compact JSON that Claude Code sends.
+# installed; otherwise a sed match on the compact JSON that Claude Code sends. jq on Windows
+# can end lines with CRLF, so carriage returns are dropped.
 field() {
   if command -v jq >/dev/null 2>&1; then
-    jq -r "$1 // empty" <<<"$input" 2>/dev/null
+    jq -r "$1 // empty" <<<"$input" 2>/dev/null | tr -d '\r'
   else
     sed -nE 's/.*"'"$2"'": *"(([^"\\]|\\.)*)".*/\1/p' <<<"$input" | head -n 1
   fi

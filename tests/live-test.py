@@ -6,7 +6,8 @@ run `cd <dir> && cd sub && rm -f *`, which always triggers Claude Code's rm safe
 The session loads this checkout's hook through --settings and skips your user settings
 (--setting-sources project,local), so an installed copy of the hook doesn't interfere.
 
-It uses your normal Claude Code login, costs a little Haiku usage and takes about a minute
+macOS and Linux only (it drives the terminal through a pty). It uses your normal Claude Code
+login, costs a little Haiku usage and takes about a minute
 per scenario. Run it after upgrading Claude Code to confirm the hook still works.
 
 usage: tests/live-test.py [--model MODEL] [--keep] [SCENARIO ...]

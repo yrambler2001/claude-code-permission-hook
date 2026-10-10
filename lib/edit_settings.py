@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Add or remove the permission-hook entry in a Claude Code settings.json.
 
-Any existing hook whose command runs permission-hook.sh is replaced, so running `add` again
-is safe. Other settings and hooks are kept. Before changing an existing file it is copied to
-<settings.json>.bak-<timestamp>; a file that would not change is left alone.
+Any existing hook that runs permission-hook.sh or permission-hook.ps1 (the Windows version,
+added by install.ps1) is replaced, so running `add` again is safe. Other settings and hooks
+are kept. Before changing an existing file it is copied to <settings.json>.bak-<timestamp>;
+a file that would not change is left alone.
 """
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import time
 
-MARKER = "permission-hook.sh"
+MARKER = re.compile(r"permission-hook\.(sh|ps1)")
 USAGE = """usage: edit_settings.py add <settings.json> <hook command>
        edit_settings.py remove <settings.json>"""
 
@@ -32,7 +34,10 @@ def load(path):
 
 
 def is_ours(hook):
-    return isinstance(hook, dict) and MARKER in str(hook.get("command", ""))
+    if not isinstance(hook, dict):
+        return False
+    args = hook.get("args") if isinstance(hook.get("args"), list) else []
+    return bool(MARKER.search(" ".join(str(part) for part in [hook.get("command", ""), *args])))
 
 
 def without_ours(groups):
