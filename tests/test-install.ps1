@@ -25,6 +25,8 @@ function Check([string] $what, [bool] $ok) {
 }
 
 function Invoke-Script([string] $name, [string[]] $arguments = @()) {
+    # Under Stop, Windows PowerShell 5.1 turns a native command's stderr into a terminating error.
+    $ErrorActionPreference = 'Continue'
     $output = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repo $name) @arguments 2>&1
     $script:lastOutput = $output | Out-String
     return $LASTEXITCODE
