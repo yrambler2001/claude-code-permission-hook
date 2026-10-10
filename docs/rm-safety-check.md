@@ -1,42 +1,31 @@
 # How Claude Code's rm safety check behaves
 
-These notes describe what Claude Code 2.1.295 does. The check is internal and undocumented,
-so details can change in any release.
+The official description is in the Claude Code docs, under
+[Critical paths](https://code.claude.com/docs/en/permission-modes#critical-paths). This page
+summarizes it and adds what we observed with Claude Code 2.1.295.
 
 ## What it checks
 
 Before Claude Code runs a Bash command, it finds every `rm` and `rmdir` in it, including ones
-inside `$(...)` and `bash -c` scripts, and works out what each one would delete. When it can't
-tell, or the target is dangerous, it shows a prompt like this:
+inside subshells, `$(...)` and `bash -c` scripts, and works out what each would delete. It
+asks before removing a *critical path*: the filesystem root and its top-level directories,
+your home directory, Windows drive roots, and your working directory and its parents. It also
+treats a target as critical when it can't tell where it points:
 
-```
-Bash command
-  cd /work/out && mkdir -p tmp && cd tmp && rm -f *
-  Dangerous rm operation on statically-unresolvable target: /work/project/*
-
-Do you want to proceed?
-❯ 1. Yes
-  2. No
-```
-
-The path in the prompt can look wrong. The check resolves a relative target against the
-session's working directory, ignoring any `cd` earlier in the command, and asks because it
-knows that guess may be wrong.
+| Example | Why it's flagged |
+|---|---|
+| `cd out && rm -f *` | It can't tell which directory the glob expands in after a `cd` |
+| `rm -rf "$DIR"/*` | If `DIR` is empty, this removes everything under `/` |
+| `rm -rf "$(pwd)"` | It can't check command output before the command runs |
+| `D=$(pwd); rm -rf "$D"` | The variable can name your working directory |
+| `rm -rf logs/*/*` | It can't tell which directories the glob reaches |
+| `rm -f /path/to/project/*` when that's the working directory | It's the working directory |
+| `bash -c "rm -rf \"$1\"/*"` | The outer shell expands `$1` to nothing first |
 
 Every variant says the removal "requires explicit approval and cannot be auto-allowed by
-permission rules". These are the cases it asks about:
-
-| Prompt says | Example that triggers it |
-|---|---|
-| the command changes directories before the removal, so the relative glob target cannot be statically resolved | `cd out && rm -f *` |
-| the removal target cannot be statically resolved to a directory | `rm -rf ../*`, `rm -rf ~/cache/*`, `rm -rf */`, `rmdir -p a/*` |
-| the glob pattern traverses directories that cannot be statically enumerated | `rm -rf /work/build_*/obj/*` |
-| the target is the output of a command substitution | `rm -rf $(ls -d /work/run_*)` |
-| the target is built from a variable that may be empty | `rm -rf "$DIR"/*` |
-| a `sh -c` script runs rm on a value known only when it runs | `bash -c 'rm -rf "$1"/*' _ "$DIR"` |
-| the command would remove a critical system directory | `rm -rf /usr` |
-| the command would remove a workspace directory (the working directory, an additional working directory, or one of their parents) | `rm -f /path/to/project/*` when `/path/to/project` is the session's working directory |
-| too many command substitutions to analyze | more than 64 `$(...)` in a command that runs rm |
+permission rules". The path in the prompt can look wrong: the check resolves a relative
+target against the session's working directory, ignoring any `cd` earlier in the command,
+and asks because it knows that guess may be wrong.
 
 Commands like these pass without a prompt:
 
@@ -45,21 +34,39 @@ Commands like these pass without a prompt:
 - `rm -rf "${OUT:?}"/*`: the `:?` makes the shell stop when `OUT` is empty.
 - `rm -rf /work/run_1 /work/run_2`, after listing the directories in a separate command.
 
+## What happens in each permission mode
+
+From the docs:
+
+| Mode | What Claude Code does |
+|---|---|
+| `default`, `acceptEdits` | Asks you |
+| `plan` | Asks you |
+| `auto` | Asks you in the terminal, with a two-minute limit. Elsewhere (desktop app, VS Code chat, `-p`, Agent SDK) denies it immediately |
+| `dontAsk` | Denies it |
+| `bypassPermissions` | Asks you, with a two-minute limit in the terminal |
+
+When the two-minute limit runs out, Claude Code denies the command and tells Claude what to
+do instead. After three unanswered prompts in a session, it denies these removals without
+asking until you send a new message. `CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT=1` turns the
+limit off: in bypass mode the prompt then waits indefinitely, and in auto mode these removals
+go to the classifier instead.
+
 ## What doesn't skip the prompt
 
 - **`--dangerously-skip-permissions`** (bypass mode): still asks.
-- **Allow rules** in `permissions.allow`: can't approve it, as the prompt itself says.
-- **Auto mode**: its classifier isn't allowed to approve it.
-- **A PreToolUse hook that returns `allow`**: Claude Code runs the full permission check
-  anyway and still asks. Its debug log says `Hook returned 'allow' for Bash, but ask
-  rule/safety check requires full permission pipeline`.
-- **Environment variables**: `CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT` turns off only the
-  command-substitution case (`rm -r $(...)`). It's undocumented.
+- **Allow rules** in `permissions.allow`: never approve it.
+- **Auto mode**: its classifier doesn't review it.
+- **A PreToolUse hook that returns `allow`**: doesn't approve it either.
+- **Environment variables**: `CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1` turns off only the
+  command-substitution case, and `CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1` only critical
+  paths typed directly into a `-c` script.
 
 ## What does: PermissionRequest hooks
 
-A [PermissionRequest hook](https://code.claude.com/docs/en/hooks) runs when a permission prompt
-is about to appear, and it runs for this prompt too. Its input looks like this:
+The docs say: "In modes that ask, a
+[`PermissionRequest` hook](https://code.claude.com/docs/en/hooks#permissionrequest) can answer
+the prompt." The hook runs when the prompt is about to appear, and its input looks like this:
 
 ```json
 {
@@ -76,11 +83,20 @@ is about to appear, and it runs for this prompt too. Its input looks like this:
 The input doesn't say why the prompt appeared. In a bypass session, though, nearly every
 prompt that still appears comes from a safety check like this one.
 
-The hook can answer `allow` or `deny`. A deny can carry a message, which Claude receives as
-the tool error, so it can fix the command and retry. In 2.1.295 both answers work for the rm
-prompt, including prompts raised by subagents; `tests/live-test.py` checks this against your
-installed version.
+The hook can answer `allow` or `deny`. A deny can carry a message, which Claude receives as the
+tool error, so it can fix the command and retry. In 2.1.295 both answers work for the rm
+prompt, including prompts raised by subagents and sessions driven through the Agent SDK's
+permission channel; `tests/live-test.py` checks this against your installed version.
 
-Claude Code skips PermissionRequest hooks for some prompts that it reserves for a person. The
-rm check isn't one of them in 2.1.295, but a later release could change that. If it does,
-the hook stops answering and you get the prompt again; nothing is approved by mistake.
+## PowerShell on Windows
+
+When the PowerShell tool is enabled, `Remove-Item` and the `cmd` built-ins `rd`, `rmdir`,
+`del` and `erase` get their own checks
+([Remove-Item in PowerShell](https://code.claude.com/docs/en/permission-modes#remove-item-in-powershell)):
+
+- System paths and wildcard targets (`*`, `dir\*`) are denied in every mode, without a prompt.
+- `Remove-Item -Recurse` on the working directory or a parent asks in modes that ask; bypass
+  mode skips this check.
+
+So in a bypass session these never produce a prompt, and the hook has nothing to answer. The
+`rm` check above still applies to the Bash tool, which runs through Git Bash on Windows.

@@ -25,6 +25,13 @@ case ${1:-} in
     ;;
 esac
 
+case $(uname -s) in
+  MINGW* | MSYS* | CYGWIN*)
+    echo "On Windows, use install.ps1: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1" >&2
+    exit 1
+    ;;
+esac
+
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config_dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 target=$config_dir/hooks/permission-hook.sh

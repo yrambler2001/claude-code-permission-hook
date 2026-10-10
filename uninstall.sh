@@ -19,6 +19,13 @@ case ${1:-} in
     ;;
 esac
 
+case $(uname -s) in
+  MINGW* | MSYS* | CYGWIN*)
+    echo "On Windows, use uninstall.ps1: powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1" >&2
+    exit 1
+    ;;
+esac
+
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config_dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 hooks_dir=$config_dir/hooks

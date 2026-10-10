@@ -16,6 +16,13 @@ jobs:
         run: shellcheck hooks/*.sh install.sh uninstall.sh tests/*.sh
       - name: python syntax
         run: python3 -m py_compile lib/edit_settings.py tests/live-test.py
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $findings = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $findings | Format-Table -AutoSize -Wrap
+          if ($findings) { exit 1 }
 
   test:
     strategy:
@@ -25,7 +32,33 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - name: hook tests
+      - name: bash hook tests
         run: tests/test-hook.sh
-      - name: install tests
+      - name: install.sh tests
         run: tests/test-install.sh
+      - name: PowerShell hook tests
+        run: pwsh -NoProfile -File tests/test-hook.ps1
+      - name: install.ps1 tests
+        run: pwsh -NoProfile -File tests/test-install.ps1
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: hook tests (Windows PowerShell 5.1)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-hook.ps1
+      - name: hook tests (PowerShell 7)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test-hook.ps1
+      - name: install.ps1 tests (Windows PowerShell 5.1)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-install.ps1
+      - name: install.ps1 tests (PowerShell 7)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test-install.ps1
+      - name: bash hook tests (Git Bash)
+        shell: bash
+        run: |
+          command -v jq >/dev/null || choco install jq -y --no-progress
+          tests/test-hook.sh

@@ -86,6 +86,12 @@ check "install creates settings.json" test "$(ours)" = 1
 "$repo_dir/uninstall.sh" >/dev/null
 check "uninstall drops the empty hooks object" test "$(jq -c . "$settings")" = '{}'
 
+# An entry written by install.ps1 (the Windows installer) is replaced, not duplicated.
+printf '%s\n' '{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":[{"type":"command","command":"powershell.exe","args":["-File","C:\\Users\\me\\.claude\\hooks\\permission-hook.ps1"]}]}]}}' >"$settings"
+"$repo_dir/install.sh" >/dev/null
+check "install.ps1 entry replaced" test "$(jq -c '[.hooks.PermissionRequest[].hooks[].command]' "$settings")" = "[$(printf '%q' "$hook" | jq -R .)]"
+"$repo_dir/uninstall.sh" >/dev/null
+
 # Invalid JSON is left alone.
 printf '{ "model": "opus", }' >"$settings"
 "$repo_dir/install.sh" >/dev/null 2>&1
